@@ -1,96 +1,250 @@
+using System.Collections;
+using Unity.VisualScripting;
 using UnityEngine;
+
 
 public class MonsterController : MonoBehaviour
 {
-    [SerializeField] int maxHP;
-    [SerializeField] int nowHP;
-
-    float moveSpeed;
-
-    Transform target;
-
-    SpriteRenderer sr;
-
-    // 공격 사정거리
-    [SerializeField] float range;
-    private void OnEnable()
+    public enum MonsterState
     {
-        nowHP = 10;
-        maxHP = 10;
+        Idle,
+        Patrol,
+        Trace,
+        Attack,
+        Hit,
+        Dead
     }
-    // Start is called once before the first execution of Update after the MonoBehaviour is created
+    public int contactDamage = 1; // 접촉 대미지
+
+    public float traceRange = 5f;   // 추적 거리
+    public float attackRange = 1.5f; // 공격 거리
+
+    public float moveSpeed = 2f;
+
+    private bool isDead = false;
+
+    private bool isHitCoroutine = false;
+    private SpriteRenderer spriteRenderer;
+
+    private Transform player;
+    private Animator animator;
+   
+    public MonsterState currentState;
+
+   
+
     void Start()
     {
-        moveSpeed = 3f;
-        sr = GetComponent<SpriteRenderer>();
-       
-        target = GameObject.Find("Player").transform;
+        player = GameObject.FindGameObjectWithTag("Player").transform;
+
+        animator = GetComponent<Animator>();
+
+        spriteRenderer = GetComponent<SpriteRenderer>();
+
+        ChangeState(MonsterState.Idle);
     }
 
-    // Update is called once per frame
     void Update()
     {
-        CheckDistance();
+        switch (currentState)
+        {
+            case MonsterState.Idle:
+                Idle();
+                break;
+
+            case MonsterState.Trace:
+                Trace();
+                break;
+
+            case MonsterState.Attack:
+                Attack();
+                break;
+
+            case MonsterState.Dead:
+                Dead();
+                break;
+            case MonsterState.Hit:
+                Hit();
+                break;
+        }
     }
-    void CheckDistance()
+
+    public void ChangeState(MonsterState newState)
     {
-        float distance = Vector3.Distance(transform.position, target.position); // 나하고 타겟 사이의 거리
+        currentState = newState;
 
-        if (distance < range)
+
+        switch (newState)
         {
-            // 공격 -> 적 방향으로 공격
+            case MonsterState.Idle:
+                animator.Play("SlimeIdle");
+                break;
 
-        }
-        else
-        {
 
-            Trace();
+            case MonsterState.Trace:
+                animator.Play("SlimeRun");
+                break;
+
+
+            case MonsterState.Attack:
+                animator.Play("SlimeAttack");
+                break;
+
+
+            case MonsterState.Dead:
+                animator.Play("SlimeDead");
+                break;
+
+           case MonsterState.Hit:
+                animator.Play("SlimeHit");
+                break;
         }
     }
-        void Trace()
-        {
-     
-            sr.flipX = CheckFlip();
-
-  
-            Move();
-        }
-
-        void Move()
-        {
-            transform.position = Vector3.MoveTowards(transform.position, target.position, moveSpeed * Time.deltaTime);
-
-        }
-
-        Vector2 GetDirection()
-        {
-            return target.position - transform.position;
-        }
-
-        bool CheckFlip()
-        {
-            return transform.position.x > target.position.x ? true : false;
-        }
-
-    public void TakeDamage(int damage)
+    void Idle()
     {
-        nowHP -= damage;
-        if (nowHP < 0)
+        // 대기 행동
+
+        float distance = Vector2.Distance(transform.position, player.position);
+        if (distance <= traceRange)
         {
-            nowHP = 0;
-            Die();
+            ChangeState(MonsterState.Trace);
         }
     }
-
-    void Die()
+    void Trace()
     {
-        StageManager.instance.RemoveMonster(this.gameObject);
-        ReturnPool();
+        if (currentState == MonsterState.Hit)
+            return;
+        float distance =
+            Vector2.Distance(transform.position, player.position);
+        // 공격 거리 진입
+        if (distance <= attackRange)
+        {
+            ChangeState(MonsterState.Attack);
+            return;
+        }
+        // 추적
+        transform.position =
+            Vector2.MoveTowards
+            (
+            transform.position,
+            player.position,
+            moveSpeed * Time.deltaTime
+            );
     }
+
+    void Attack()
+    {
+        float distance =
+            Vector2.Distance(transform.position, player.position);
+        // 공격 거리 벗어나면 추적
+        if (distance > attackRange)
+        {
+            ChangeState(MonsterState.Trace);
+            return;
+        }
+        // 공격 애니메이션 실행
+        // Animation Event에서 데미지 처리 추천
+    }
+
+    public void Dead()
+    {
+        isDead = true;
+
+        ChangeState(MonsterState.Hit);
+    }
+
 
     public void ReturnPool()
     {
-        ObjectPoolManager.instance.ReturnObject("Monster", this.gameObject);
+        gameObject.SetActive(false);
     }
 
+
+    void Hit()
+    {
+        // 한번만 실행
+        if (!isHitCoroutine)
+        {
+            StartCoroutine(HitRoutine());
+        }
+    }
+
+    IEnumerator DeadFade()
+    {
+        animator.Play("SlimeDead");
+
+        yield return new WaitForSeconds(1f);
+
+        float fadeTime = 3f;
+
+        float timer = 0f;
+
+        Color color = spriteRenderer.color;
+
+        while (timer < fadeTime)
+        {
+            timer += Time.deltaTime;
+            float alpha = Mathf.Lerp(
+                1f,
+                0f,
+                timer / fadeTime
+            );
+            spriteRenderer.color =
+                new Color(
+                    color.r,
+                    color.g,
+                    color.b,
+                    alpha
+                );
+            yield return null;
+        }
+        gameObject.SetActive(false);
+    }
+    IEnumerator HitRoutine()
+    {
+        isHitCoroutine = true;
+
+
+        animator.Play("SlimeHit");
+
+
+        // Hit 애니메이션 시간
+        yield return new WaitForSeconds(0.3f);
+
+
+
+        // 사망 여부 체크
+        if (isDead)
+        {
+            ChangeState(MonsterState.Dead);
+
+            StartCoroutine(DeadFade());
+        }
+        else
+        {
+            ChangeState(MonsterState.Idle);
+        }
+
+
+        isHitCoroutine = false;
+    }
+    public void Die()
+    {
+        isDead = true;
+
+        ChangeState(MonsterState.Hit);
+    }
+    private void OnCollisionEnter2D(Collision2D collision)
+    {
+        if (collision.gameObject.CompareTag("Player"))
+        {
+            PlayerController player =
+                collision.gameObject.GetComponent<PlayerController>();
+
+            if (player != null)
+            {
+                player.TakeDamage(contactDamage);
+            }
+        }
+    }
 }
